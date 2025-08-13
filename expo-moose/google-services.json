@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "287280832561",
+    "project_id": "moose-6f56c",
+    "storage_bucket": "moose-6f56c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:287280832561:android:15582d0f8ce24f28173510",
+        "android_client_info": {
+          "package_name": "com.moose.solar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBW9LVl1TzB26bIlG96aXJld6gtruBc6Os"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
