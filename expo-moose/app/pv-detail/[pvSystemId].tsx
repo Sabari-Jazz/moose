@@ -114,6 +114,7 @@ export default function PvSystemDetailScreen() {
   const [devices, setDevices] = useState<api.DeviceMetadata[]>([]);
   const [inverterIds, setInverterIds] = useState<string[]>([]);
   const [inverterProfiles, setInverterProfiles] = useState<Record<string, any>>({});
+  const [inverterStatuses, setInverterStatuses] = useState<Record<string, any>>({});
 
   // Combined loading and error states
   const [loading, setLoading] = useState(true);
@@ -459,29 +460,40 @@ export default function PvSystemDetailScreen() {
         if (inverterIdList.length > 0) {
           const profilePromises = inverterIdList.map(async (inverterId: string) => {
             try {
-              const profile = await api.getInverterProfile(inverterId);
-              return { inverterId, profile };
+              const [profile, status] = await Promise.all([
+                api.getInverterProfile(inverterId),
+                api.getInverterStatus(inverterId)
+              ]);
+              return { inverterId, profile, status };
             } catch (error) {
-              console.error(`Failed to fetch profile for inverter ${inverterId}:`, error);
-              return { inverterId, profile: null };
+              console.error(`Failed to fetch profile/status for inverter ${inverterId}:`, error);
+              return { inverterId, profile: null, status: null };
             }
           });
           
-          const profiles = await Promise.allSettled(profilePromises);
+          const results = await Promise.allSettled(profilePromises);
           const profileMap: Record<string, any> = {};
+          const statusMap: Record<string, any> = {};
           
-          profiles.forEach((result) => {
-            if (result.status === "fulfilled" && result.value.profile) {
-              profileMap[result.value.inverterId] = result.value.profile;
+          results.forEach((result) => {
+            if (result.status === "fulfilled") {
+              if (result.value.profile) {
+                profileMap[result.value.inverterId] = result.value.profile;
+              }
+              if (result.value.status) {
+                statusMap[result.value.inverterId] = result.value.status;
+              }
             }
           });
           
           setInverterProfiles(profileMap);
+          setInverterStatuses(statusMap);
         }
       } else {
         console.error("Failed System Inverters:", systemInverters.reason);
         setInverterIds([]);
         setInverterProfiles({});
+        setInverterStatuses({});
       }
       // Process expected earnings data
       if (expectedEarningsData.status === "fulfilled") {
@@ -1706,6 +1718,27 @@ return (
     index: number;
   }) => {
     const profile = inverterProfiles[inverterId];
+    const inverterStatus = inverterStatuses[inverterId];
+    
+    // Map inverter status to display values (similar to StatusIcon logic)
+    const getInverterStatusDisplay = (status: any) => {
+      if (!status) {
+        return { color: "#9E9E9E", backgroundColor: "#9E9E9E" + "22", text: "UNKNOWN" };
+      }
+      
+      const statusValue = status.status || "";
+      if (statusValue === "red" || statusValue === "error") {
+        return { color: "#F44336", backgroundColor: "#F44336" + "22", text: "ERROR" };
+      } else if (statusValue === "green" || statusValue === "online") {
+        return { color: "#4CAF50", backgroundColor: "#4CAF50" + "22", text: "ONLINE" };
+      } else if (statusValue === "moon") {
+        return { color: "#9E9E9E", backgroundColor: "#9E9E9E" + "22", text: "SLEEPING" };
+      } else {
+        return { color: "#9E9E9E", backgroundColor: "#9E9E9E" + "22", text: "UNKNOWN" };
+      }
+    };
+    
+    const statusDisplay = getInverterStatusDisplay(inverterStatus);
     
     return (
       <Animated.View
@@ -1743,16 +1776,16 @@ return (
                   style={[
                     styles.deviceStatusChip,
                     {
-                      backgroundColor: profile?.deactivationDate ? "#FF3B30" + "22" : "#34C759" + "22",
+                      backgroundColor: statusDisplay.backgroundColor,
                     },
                   ]}
                   textStyle={{
-                    color: profile?.deactivationDate ? "#FF3B30" : "#34C759",
+                    color: statusDisplay.color,
                     fontWeight: "600",
                     fontSize: 12,
                   }}
                 >
-                  {profile?.deactivationDate ? "INACTIVE" : "ACTIVE"}
+                  {statusDisplay.text}
                 </Chip>
               </View>
             </View>

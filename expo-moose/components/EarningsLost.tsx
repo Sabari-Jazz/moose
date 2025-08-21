@@ -218,7 +218,8 @@ const EarningsLost: React.FC<EarningsLostProps> = ({ systemId }) => {
       // Step 1: Get inverter status to find lastStatusChangeTime
       console.log(`[EarningsLost] Fetching status for inverter ${inverterId}`);
       const inverterStatus = await getInverterStatus(inverterId);
-      const lastStatusChangeTime = new Date(inverterStatus.lastStatusChangeTime);
+      // Ensure UTC string is properly parsed as UTC, not local time
+      const lastStatusChangeTime = new Date(inverterStatus.lastStatusChangeTime + (inverterStatus.lastStatusChangeTime.includes('Z') ? '' : 'Z'));
       console.log(`[EarningsLost] Inverter ${inverterId} last status change: ${lastStatusChangeTime.toISOString()}`);
       
       // Step 2: Get last 5 days with actual earnings data before the inverter went red and calculate average daily earnings
@@ -328,7 +329,8 @@ const EarningsLost: React.FC<EarningsLostProps> = ({ systemId }) => {
       // Still return the lastStatusChangeTime even if calculation fails
       try {
         const inverterStatus = await getInverterStatus(inverterId);
-        return { earningsLost: 0, lastStatusChangeTime: new Date(inverterStatus.lastStatusChangeTime) };
+        // Ensure UTC string is properly parsed as UTC, not local time
+        return { earningsLost: 0, lastStatusChangeTime: new Date(inverterStatus.lastStatusChangeTime + (inverterStatus.lastStatusChangeTime.includes('Z') ? '' : 'Z')) };
       } catch {
         return { earningsLost: 0, lastStatusChangeTime: new Date() };
       }

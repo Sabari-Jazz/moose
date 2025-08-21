@@ -453,8 +453,8 @@ def main():
     logger.info("Starting historical device energy data collection")
     
     # Define date range (5 weeks back from 2025-07-17)
-    start_date = '2025-08-05'
-    end_date = '2025-08-07'
+    start_date = '2025-08-07'
+    end_date = '2025-08-17'
   #  start_date = '2025-07-23'
    # end_date = '2025-07-24'
     date_range = generate_date_range(start_date, end_date)

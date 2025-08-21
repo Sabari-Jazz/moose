@@ -535,7 +535,7 @@ export default function DashboardScreen() {
               style={{ color: colors.primary, fontWeight: "400" }}
             >
               {" "}
-              (v2.6.0)
+              (v3.0.0)
             </Text>
           )}
           

@@ -49,7 +49,6 @@ load_dotenv()
 
 #---------------------------------------
 # DynamoDB Helper Functions
-
 def find_system_by_name(system_name: str, portfolio_systems: List[Dict]) -> Optional[str]:
     """
     Find a system ID by matching the system name.
@@ -1657,10 +1656,9 @@ def generate_chart_data(
 
         # Determine chart type and period text (same logic as before)
         if len(start_date) == 4:
-            chart_type = "bar"
             period_text = f"Years {start_date}-{end_date}" if start_date != end_date else f"Year {start_date}"
         elif len(start_date) == 7:
-            chart_type = "bar"
+
             try:
                 start_formatted = datetime.strptime(start_date, "%Y-%m").strftime("%B %Y")
                 if start_date != end_date:
@@ -1675,7 +1673,6 @@ def generate_chart_data(
                 start_dt = datetime.strptime(start_date, "%Y-%m-%d")
                 end_dt = datetime.strptime(end_date, "%Y-%m-%d")
                 days_diff = (end_dt - start_dt).days + 1
-                chart_type = "line" if days_diff <= 30 else "bar"
                 if days_diff == 1:
                     period_text = start_dt.strftime("%B %d, %Y")
                 else:
@@ -1683,8 +1680,13 @@ def generate_chart_data(
                     end_formatted = end_dt.strftime("%B %d, %Y")
                     period_text = f"{start_formatted} - {end_formatted}"
             except ValueError:
-                chart_type = "bar"
                 period_text = f"{start_date} - {end_date}"
+
+        # Override chart type based on number of data points
+        if len(chart_data_points) <= 12:
+            chart_type = "bar"
+        else:
+            chart_type = "line"
 
         data_type_text = {
             "energy_production": "Energy Production",
@@ -1858,35 +1860,34 @@ def generate_monthly_solar_report(site_id: str, month_string: str, jwt_token: st
         # 2. Calculate average daily earnings
         days_in_month = calendar.monthrange(year, month)[1]
         average_daily_earnings = total_earnings / days_in_month if days_in_month > 0 else 0
-         #3.  Build monthly earnings breakdown (same month, last up to 5 years)
+         #3.  Build monthly earnings breakdown (same month, last up to 5 years) using a single monthly-range API call
         earnings_years = []
         earnings_values = []
         try:
-            # Build requests for last 5 years (including current)
-            years_to_fetch = [year - offset for offset in range(0, 5)]
-            ym_list = [(str(y), f"{y}-{month:02d}") for y in years_to_fetch]
-            results_map: Dict[str, float] = {}
-            with ThreadPoolExecutor(max_workers=min(8, len(ym_list))) as executor:
-                future_map = {
-                    executor.submit(get_energy_production, site_id, ym, ym, jwt_token): y
-                    for (y, ym) in ym_list
-                }
-                for f in as_completed(future_map):
-                    y = future_map[f]
-                    try:
-                        md = f.result()
-                        if 'error' in md:
-                            print(f"Earnings history: error for {y}: {md.get('error')}")
+            start_history_year = year - 4
+            start_history_ym = f"{start_history_year}-{month:02d}"
+            end_history_ym = f"{year}-{month:02d}"
+            hist_data = get_energy_production(site_id, start_history_ym, end_history_ym, jwt_token)
+            if 'error' in hist_data:
+                print(f"Earnings history range error: {hist_data.get('error')}")
+            else:
+                rate = float(hist_data.get('earnings_rate', get_system_earnings_rate(site_id)) or 0.4)
+                per_year_map: Dict[str, float] = {}
+                for dp in hist_data.get('data_points', []):
+                    d = str(dp.get('date', ''))
+                    if len(d) >= 7:
+                        try:
+                            y = d[:4]
+                            m = d[5:7]
+                            if int(m) == month:
+                                ekwh = float(dp.get('energy_kwh', 0) or 0)
+                                per_year_map[y] = round(ekwh * rate, 2)
+                        except Exception:
                             continue
-                        val = float(md.get('total_earnings', 0) or 0)
-                        results_map[str(y)] = round(val, 2)
-                    except Exception as ee:
-                        print(f"Earnings history exception for {y}: {ee}")
-                        continue
-            # chronological order oldest -> newest
-            for y in sorted(results_map.keys()):
-                earnings_years.append(y)
-                earnings_values.append(results_map[y])
+                for y in [str(yv) for yv in range(start_history_year, year + 1)]:
+                    if y in per_year_map:
+                        earnings_years.append(y)
+                        earnings_values.append(per_year_map[y])
         except Exception as e_hist:
             print(f"Error building earnings history: {e_hist}")
         earnings_history = { 'years': earnings_years, 'earnings': earnings_values }
@@ -1935,49 +1936,31 @@ def generate_monthly_solar_report(site_id: str, month_string: str, jwt_token: st
         # 4. Average inverter uptime - hardcoded for now
         average_inverter_uptime = 97.5
         
-        # 5. Get daily production data concurrently for each day
-        print(f"Getting daily production data for {days_in_month} days (concurrent)")
-        dates_list = [datetime(year, month, d).strftime("%Y-%m-%d") for d in range(1, days_in_month + 1)]
-        daily_results: Dict[str, Dict[str, float]] = {}
-        def _fetch_day(date_str: str) -> Dict[str, float]:
-            try:
-                data = get_energy_production(site_id, date_str, date_str, jwt_token)
-                if "error" not in data:
-                    return {
-                        "production": float(data.get('total_energy_kwh', 0) or 0),
-                        "earnings": float(data.get('total_earnings', 0) or 0)
-                    }
-            except Exception:
-                pass
-            # fallback proportional
-            return {
-                "production": (total_production / days_in_month) if days_in_month > 0 else 0.0,
-                "earnings": (total_earnings / days_in_month) if days_in_month > 0 else 0.0,
-            }
-        with ThreadPoolExecutor(max_workers=min(16, len(dates_list))) as executor:
-            future_map = {executor.submit(_fetch_day, d): d for d in dates_list}
-            for f in as_completed(future_map):
-                d = future_map[f]
-                try:
-                    daily_results[d] = f.result()
-                except Exception as e:
-                    print(f"Daily fetch failed for {d}: {e}")
-                    daily_results[d] = {
-                        "production": (total_production / days_in_month) if days_in_month > 0 else 0.0,
-                        "earnings": (total_earnings / days_in_month) if days_in_month > 0 else 0.0,
-                    }
+        # 5. Get daily production data using a single daily-range API call
+        print(f"Getting daily production data for the month via single range call")
+        start_day_str = f"{year}-{month:02d}-01"
+        end_day_str = f"{year}-{month:02d}-{days_in_month:02d}"
+        daily_range = get_energy_production(site_id, start_day_str, end_day_str, jwt_token)
         daily_data = []
         highest_production_day = {"date": "", "production_kwh": 0}
-        for d in dates_list:
-            vals = daily_results.get(d, {"production": 0.0, "earnings": 0.0})
-            daily_record = {
-                "date": d,
-                "production_kwh": round(vals["production"], 2),
-                "earnings_usd": round(vals["earnings"], 2),
-            }
-            daily_data.append(daily_record)
-            if vals["production"] > highest_production_day["production_kwh"]:
-                highest_production_day = {"date": d, "production_kwh": round(vals["production"], 2)}
+        try:
+            if 'error' not in daily_range:
+                rate = float(daily_range.get('earnings_rate', get_system_earnings_rate(site_id)) or 0.4)
+                for dp in daily_range.get('data_points', []):
+                    d = str(dp.get('date', ''))
+                    ekwh = float(dp.get('energy_kwh', 0) or 0)
+                    daily_record = {
+                        "date": d,
+                        "production_kwh": round(ekwh, 2),
+                        "earnings_usd": round(ekwh * rate, 2),
+                    }
+                    daily_data.append(daily_record)
+                    if ekwh > highest_production_day["production_kwh"]:
+                        highest_production_day = {"date": d, "production_kwh": round(ekwh, 2)}
+            else:
+                print(f"Daily range error: {daily_range.get('error')}")
+        except Exception as e:
+            print(f"Error processing daily range data: {e}")
         
         # 7. Generate inverter performance list with real inverter IDs but hardcoded uptimes
         inverters = []
@@ -1999,7 +1982,9 @@ def generate_monthly_solar_report(site_id: str, month_string: str, jwt_token: st
                     Key={
                         'PK': f'Inverter#{inverter_id}',
                         'SK': 'PROFILE'
-                    }
+                    },
+                    ProjectionExpression='#dn',
+                    ExpressionAttributeNames={'#dn': 'deviceName'}
                 )
                 if 'Item' in profile_resp:
                     device_name = profile_resp['Item'].get('deviceName', device_name)
@@ -2459,6 +2444,8 @@ def create_and_upload_pdf_report(site_id: str, month_string: str, month_api_form
         # Chart data - use provided production data
         inverter_bar_chart.data = [inverter_chart_values]
         inverter_bar_chart.categoryAxis.categoryNames = inverter_chart_names
+        inverter_bar_chart.valueAxis.valueMin = 0
+        inverter_bar_chart.valueAxis.valueMax = max(inverter_chart_values) * 1.1
         
         # Chart styling - cleaner
         inverter_bar_chart.bars[0].fillColor = colors.HexColor('#1e3a8a')
@@ -2549,6 +2536,7 @@ def create_and_upload_pdf_report(site_id: str, month_string: str, month_api_form
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         return "https://moose-reports.s3.amazonaws.com/error-report.pdf"  # Fallback URL
+
 # A function to generate the energy production function description with current dates
 
 def find_system_by_name_description():
@@ -2933,7 +2921,7 @@ FUNCTION_SPECS = [
             "function": {
                 "name": "generate_chart_data",
                 "description": (
-                    "Generate chart data for visualization when user asks to 'show', 'display', 'graph', 'chart', or 'visualize' data.\n\n"
+                    "Generate chart data for visualization. Treat any phrasing that implies visualization (e.g., 'show', 'display', 'graph', 'chart', 'visualize', 'plot') as an explicit instruction to generate a chart and call this tool immediately without asking for confirmation.\n\n"
                     "SOLAR.WEB API FORMAT OPTIMIZATION:\n"
                     "The Solar.web API supports different aggregation levels. Choose the optimal format:\n\n"
                     "YEARLY FORMAT (YYYY): Use for multi-year requests\n"
@@ -3191,12 +3179,9 @@ class SolarAssistantRAG:
         - In portfolio mode, when the user refers to a system by name or partial name, use your best judgement and select the most likely system from the portfolio, even if the name is not an exact match. Do not ask the user for confirmation unless there is a true ambiguity (e.g., two systems with nearly identical names).
         
         CHART GENERATION:
-        - When users ask to "show", "display", "graph", "chart", or "visualize" data, AUTOMATICALLY use the generate_chart_data function
-        - IMPORTANT: Do NOT ask for permission - generate the chart immediately when users use these keywords
-        - Keywords that trigger automatic chart generation: "show me", "display", "graph", "chart", "visualize", "plot"
-        - Always provide a helpful text summary along with the chart data
-        - For chart requests, be descriptive about what the chart will show
-        - The chart will be automatically rendered by the frontend when chart_data is provided
+        - Treat any user phrasing that implies visualization (e.g., "show", "display", "graph", "chart", "visualize", "plot") as an explicit instruction to generate a chart.
+        - Always call the generate_chart_data tool immediately for such requests. Do not ask for confirmation.
+        - Provide a concise textual summary alongside chart_data (the frontend renders charts automatically).
         
         SMART DATA GRANULARITY SELECTION:
         Choose the API format that provides the most meaningful data granularity:
@@ -3736,6 +3721,7 @@ async def chat(chat_message: ChatMessage):
         )
         
         # Log the conversation to DynamoDB
+        """
         log_conversation_to_db(
             user_id=user_id,
             user_message=chat_message.message,
@@ -3744,7 +3730,7 @@ async def chat(chat_message: ChatMessage):
             chart_data=result.get("chart_data"),
             dynamodb_queries=result.get("dynamodb_queries", [])
         )
-        
+        """        
         # Process source documents if present
         source_documents = []
         if result.get("source_documents"):
