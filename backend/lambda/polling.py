@@ -86,6 +86,11 @@ class PvSystemMetadata:
         self.pv_system_id = pv_system_id
         self.name = name
 
+class InverterMetadata:
+    def __init__(self, device_id: str, system_id: str):
+        self.device_id = device_id
+        self.system_id = system_id
+
 def get_jwt_token() -> str:
     """Get a JWT token for authentication with the Solar.web API with caching"""
     global _jwt_token_cache
@@ -219,6 +224,55 @@ def get_pv_systems() -> List[PvSystemMetadata]:
         
     except Exception as e:
         logger.error(f"Failed to get PV systems: {str(e)}")
+        return []
+
+def get_all_inverters() -> List[InverterMetadata]:
+    """Get a list of all inverters from DynamoDB profiles"""
+    try:
+        logger.info("Querying DynamoDB for inverter profiles...")
+        
+        inverter_profiles = []
+        
+        # Use scan with filter expression to find all inverter profiles
+        response = table.scan(
+            FilterExpression='begins_with(PK, :pk_prefix) AND SK = :sk_value',
+            ExpressionAttributeValues={
+                ':pk_prefix': 'Inverter#',
+                ':sk_value': 'PROFILE'
+            }
+        )
+        
+        items = response.get('Items', [])
+        
+        # Handle pagination if there are more items
+        while 'LastEvaluatedKey' in response:
+            logger.info("Fetching more inverter items from DynamoDB...")
+            response = table.scan(
+                FilterExpression='begins_with(PK, :pk_prefix) AND SK = :sk_value',
+                ExpressionAttributeValues={
+                    ':pk_prefix': 'Inverter#',
+                    ':sk_value': 'PROFILE'
+                },
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
+        
+        # Extract deviceId and pvSystemId from each item
+        for item in items:
+            device_id = item.get('deviceId')
+            pv_system_id = item.get('pvSystemId')
+            
+            if device_id and pv_system_id:
+                inverter_profiles.append(InverterMetadata(
+                    device_id=device_id,
+                    system_id=pv_system_id
+                ))
+        
+        logger.info(f"Found {len(inverter_profiles)} inverter profiles")
+        return inverter_profiles
+        
+    except Exception as e:
+        logger.error(f"Failed to get inverters: {str(e)}")
         return []
 
 def find_channel_value(api_response, channel_name, aggregate=False):
@@ -477,6 +531,203 @@ def store_yearly_data(system: PvSystemMetadata, target_date: datetime, earnings_
         logger.error(f"❌ Error storing yearly data for {system.name}: {str(e)}")
         return False
 
+def store_inverter_daily_data(inverter: InverterMetadata, target_date: datetime, earnings_rate: float) -> bool:
+    """Store daily inverter data - makes 2 API calls (energy + power)"""
+    try:
+        logger.info(f"Storing daily inverter data for {inverter.device_id}")
+        
+        # API call 1: Get energy production
+        energy_wh = get_inverter_daily_energy(inverter.system_id, inverter.device_id, target_date.strftime("%Y-%m-%d"))
+        
+        # API call 2: Get current power
+        current_power_w = get_inverter_current_power(inverter.system_id, inverter.device_id)
+        
+        # Calculate CO2 savings (using same formula as systems: energy_kwh * 0.53 kg CO2/kWh)
+        energy_kwh = energy_wh / 1000.0
+        co2_kg = energy_kwh * 0.53  # Standard CO2 savings rate
+        
+        # Calculate earnings
+        earnings = energy_kwh * earnings_rate
+        
+        # Create DynamoDB item
+        item = {
+            'PK': f'Inverter#{inverter.device_id}',
+            'SK': f'DATA#DAILY#{target_date.strftime("%Y-%m-%d")}',
+            'deviceId': inverter.device_id,
+            'systemId': inverter.system_id,
+            'date': target_date.strftime("%Y-%m-%d"),
+            'dataType': 'DAILY_CONSOLIDATED',
+            'energyProductionWh': Decimal(str(round(energy_wh, 2))),
+            'currentPowerW': Decimal(str(round(current_power_w, 2))),
+            'co2Savings': Decimal(str(round(co2_kg, 2))),
+            'earnings': Decimal(str(round(earnings, 4))),
+            'createdAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        }
+        
+        # Store in DynamoDB
+        table.put_item(Item=item)
+        logger.info(f"✅ Stored daily inverter data for {inverter.device_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error storing daily inverter data for {inverter.device_id}: {str(e)}")
+        return False
+
+def store_inverter_weekly_data(inverter: InverterMetadata, target_date: datetime, earnings_rate: float) -> bool:
+    """Store weekly inverter data - makes 1 API call (aggregated energy)"""
+    try:
+        logger.info(f"Storing weekly inverter data for {inverter.device_id}")
+        
+        monday_date = get_first_day_of_week(target_date)
+        
+        # API call: Get aggregated energy
+        energy_wh = get_inverter_aggregated_energy(
+            inverter.system_id, 
+            inverter.device_id, 
+            monday_date.strftime("%Y-%m-%d"), 
+            target_date.strftime("%Y-%m-%d")
+        )
+        
+        # Calculate CO2 savings
+        energy_kwh = energy_wh / 1000.0
+        co2_kg = energy_kwh * 0.53
+        
+        # Calculate earnings
+        earnings = energy_kwh * earnings_rate
+        
+        # Create DynamoDB item
+        item = {
+            'PK': f'Inverter#{inverter.device_id}',
+            'SK': f'DATA#WEEKLY#{monday_date.strftime("%Y-%m-%d")}',
+            'deviceId': inverter.device_id,
+            'systemId': inverter.system_id,
+            'weekStart': monday_date.strftime("%Y-%m-%d"),
+            'dataType': 'WEEKLY_CONSOLIDATED',
+            'energyProductionWh': Decimal(str(round(energy_wh, 2))),
+            'co2Savings': Decimal(str(round(co2_kg, 2))),
+            'earnings': Decimal(str(round(earnings, 4))),
+            'createdAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        }
+        
+        # Store in DynamoDB
+        table.put_item(Item=item)
+        logger.info(f"✅ Stored weekly inverter data for {inverter.device_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error storing weekly inverter data for {inverter.device_id}: {str(e)}")
+        return False
+
+def store_inverter_monthly_data(inverter: InverterMetadata, target_date: datetime, earnings_rate: float) -> bool:
+    """Store monthly inverter data - makes 1 API call (aggregated energy)"""
+    try:
+        logger.info(f"Storing monthly inverter data for {inverter.device_id}")
+        
+        month_start = get_first_day_of_month(target_date)
+        
+        # API call: Get aggregated energy
+        energy_wh = get_inverter_aggregated_energy(
+            inverter.system_id, 
+            inverter.device_id, 
+            month_start.strftime("%Y-%m"), 
+            target_date.strftime("%Y-%m")
+        )
+        
+        # Calculate CO2 savings
+        energy_kwh = energy_wh / 1000.0
+        co2_kg = energy_kwh * 0.53
+        
+        # Calculate earnings
+        earnings = energy_kwh * earnings_rate
+        
+        # Create DynamoDB item
+        item = {
+            'PK': f'Inverter#{inverter.device_id}',
+            'SK': f'DATA#MONTHLY#{target_date.strftime("%Y-%m")}',
+            'deviceId': inverter.device_id,
+            'systemId': inverter.system_id,
+            'month': target_date.strftime("%Y-%m"),
+            'dataType': 'MONTHLY_CONSOLIDATED',
+            'energyProductionWh': Decimal(str(round(energy_wh, 2))),
+            'co2Savings': Decimal(str(round(co2_kg, 2))),
+            'earnings': Decimal(str(round(earnings, 4))),
+            'createdAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        }
+        
+        # Store in DynamoDB
+        table.put_item(Item=item)
+        logger.info(f"✅ Stored monthly inverter data for {inverter.device_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error storing monthly inverter data for {inverter.device_id}: {str(e)}")
+        return False
+
+def store_inverter_yearly_data(inverter: InverterMetadata, target_date: datetime, earnings_rate: float) -> bool:
+    """Store yearly inverter data - makes 1 API call (aggregated energy)"""
+    try:
+        logger.info(f"Storing yearly inverter data for {inverter.device_id}")
+        
+        year_start = get_first_day_of_year(target_date)
+        
+        # API call: Get aggregated energy
+        energy_wh = get_inverter_aggregated_energy(
+            inverter.system_id, 
+            inverter.device_id, 
+            year_start.strftime("%Y"), 
+            target_date.strftime("%Y")
+        )
+        
+        # Calculate CO2 savings
+        energy_kwh = energy_wh / 1000.0
+        co2_kg = energy_kwh * 0.53
+        
+        # Calculate earnings
+        earnings = energy_kwh * earnings_rate
+        
+        # Create DynamoDB item
+        item = {
+            'PK': f'Inverter#{inverter.device_id}',
+            'SK': f'DATA#YEARLY#{target_date.strftime("%Y")}',
+            'deviceId': inverter.device_id,
+            'systemId': inverter.system_id,
+            'year': target_date.strftime("%Y"),
+            'dataType': 'YEARLY_CONSOLIDATED',
+            'energyProductionWh': Decimal(str(round(energy_wh, 2))),
+            'co2Savings': Decimal(str(round(co2_kg, 2))),
+            'earnings': Decimal(str(round(earnings, 4))),
+            'createdAt': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat()
+        }
+        
+        # Store in DynamoDB
+        table.put_item(Item=item)
+        logger.info(f"✅ Stored yearly inverter data for {inverter.device_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error storing yearly inverter data for {inverter.device_id}: {str(e)}")
+        return False
+
+def process_inverter(inverter: InverterMetadata, target_date: datetime) -> Dict[str, bool]:
+    """Process all data for a single inverter"""
+    logger.info(f"Processing inverter: {inverter.device_id}")
+    
+    # Get custom earnings rate for the system this inverter belongs to
+    earnings_rate = get_system_earnings_rate(inverter.system_id)
+    
+    results = {
+        'daily': store_inverter_daily_data(inverter, target_date, earnings_rate),
+        'weekly': store_inverter_weekly_data(inverter, target_date, earnings_rate),
+        'monthly': store_inverter_monthly_data(inverter, target_date, earnings_rate),
+        'yearly': store_inverter_yearly_data(inverter, target_date, earnings_rate)
+    }
+    
+    return results
+
 def get_system_earnings_rate(system_id: str) -> float:
     """Get the earnings rate for a system from DynamoDB profile, default to 0.4 if not found"""
     try:
@@ -500,6 +751,92 @@ def get_system_earnings_rate(system_id: str) -> float:
     except Exception as e:
         logger.warning(f"Error querying earnings rate for {system_id}: {str(e)}. Using default: $0.4")
         return 0.4
+
+def get_inverter_daily_energy(system_id: str, device_id: str, date: str) -> Optional[float]:
+    """Get daily energy production for a specific inverter on a specific date"""
+    try:
+        endpoint = f"pvsystems/{system_id}/devices/{device_id}/aggrdata"
+        params = {
+            'from': date,
+            'to': date
+        }
+        
+        logger.debug(f"Fetching energy data for device {device_id} on {date}")
+        response = api_request(endpoint, params=params)
+        
+        # Extract energy value from response
+        if 'data' in response and response['data']:
+            for data_point in response['data']:
+                if 'channels' in data_point and data_point['channels']:
+                    for channel in data_point['channels']:
+                        if channel.get('channelName') == 'EnergyExported':
+                            energy_value = channel.get('value')
+                            if energy_value is not None:
+                                logger.debug(f"Found energy value: {energy_value} Wh for device {device_id} on {date}")
+                                return float(energy_value)
+        
+        logger.warning(f"No energy data found for device {device_id} on {date}")
+        return 0.0  # Return 0 instead of None for missing data
+        
+    except Exception as e:
+        logger.error(f"Error fetching energy data for device {device_id} on {date}: {str(e)}")
+        return 0.0  # Return 0 on error
+
+def get_inverter_aggregated_energy(system_id: str, device_id: str, from_date: str, to_date: str) -> float:
+    """Get aggregated energy production for a specific inverter over a date range"""
+    try:
+        endpoint = f"pvsystems/{system_id}/devices/{device_id}/aggrdata"
+        params = {
+            'from': from_date,
+            'to': to_date
+        }
+        
+        logger.debug(f"Fetching aggregated energy data for device {device_id} from {from_date} to {to_date}")
+        response = api_request(endpoint, params=params)
+        
+        total_energy = 0.0
+        
+        # Extract and sum energy values from response
+        if 'data' in response and response['data']:
+            for data_point in response['data']:
+                if 'channels' in data_point and data_point['channels']:
+                    for channel in data_point['channels']:
+                        if channel.get('channelName') == 'EnergyExported':
+                            energy_value = channel.get('value')
+                            if energy_value is not None:
+                                total_energy += float(energy_value)
+                                logger.debug(f"Added {energy_value} Wh for device {device_id} on {data_point.get('logDateTime', 'unknown date')}")
+        
+        logger.debug(f"Total aggregated energy for device {device_id}: {total_energy} Wh")
+        return total_energy
+        
+    except Exception as e:
+        logger.error(f"Error fetching aggregated energy data for device {device_id}: {str(e)}")
+        return 0.0
+
+def get_inverter_current_power(system_id: str, device_id: str) -> float:
+    """Get current power output for a specific inverter"""
+    try:
+        endpoint = f"pvsystems/{system_id}/devices/{device_id}/flowdata"
+        
+        logger.debug(f"Fetching current power data for device {device_id}")
+        response = api_request(endpoint)
+        
+        # Extract power value from response
+        if 'data' in response and response['data'] and 'channels' in response['data']:
+            for channel in response['data']['channels']:
+                if channel.get('channelName') == 'PowerAC':
+                    power_value = channel.get('value')
+                    if power_value is not None:
+                        logger.debug(f"Found current power: {power_value} W for device {device_id}")
+                        return float(power_value)
+        
+        logger.debug(f"No current power data found for device {device_id}")
+        return 0.0
+        
+    except Exception as e:
+        logger.error(f"Error fetching current power data for device {device_id}: {str(e)}")
+        return 0.0
 
 def process_system(system: PvSystemMetadata, target_date: datetime) -> Dict[str, bool]:
     """Process all data for a single system"""
@@ -533,6 +870,7 @@ def process_systems_concurrently():
     # Initialize statistics
     stats = {
         'systems_processed': 0,
+        'inverters_processed': 0,
         'consolidated_entries_stored': 0,
         'errors': 0,
         'api_calls_made': 0
@@ -547,34 +885,43 @@ def process_systems_concurrently():
         logger.info("Fetching PV systems list...")
         pv_systems = get_pv_systems()
         
-        if not pv_systems:
-            logger.warning("No PV systems found")
+        # Get all inverters
+        logger.info("Fetching inverter profiles...")
+        inverters = get_all_inverters()
+        
+        if not pv_systems and not inverters:
+            logger.warning("No PV systems or inverters found")
             return stats
         
-        logger.info(f"Found {len(pv_systems)} PV systems. Starting batch processing...")
+        logger.info(f"Found {len(pv_systems)} PV systems and {len(inverters)} inverters. Starting batch processing...")
         
-        # Process systems in batches of 8 with 3-second delays between batches
-        batch_size = 32
-        total_batches = (len(pv_systems) + batch_size - 1) // batch_size
+        # Combine systems and inverters for processing
+        all_items = [(item, 'system') for item in pv_systems] + [(item, 'inverter') for item in inverters]
+        
+        # Process items in batches
+        batch_size = 16
+        total_batches = (len(all_items) + batch_size - 1) // batch_size
         
         for batch_num in range(total_batches):
             start_idx = batch_num * batch_size
-            end_idx = min(start_idx + batch_size, len(pv_systems))
-            batch_systems = pv_systems[start_idx:end_idx]
+            end_idx = min(start_idx + batch_size, len(all_items))
+            batch_items = all_items[start_idx:end_idx]
             
-            logger.info(f"Processing batch {batch_num + 1}/{total_batches}: systems {start_idx + 1}-{end_idx}")
+            logger.info(f"Processing batch {batch_num + 1}/{total_batches}: items {start_idx + 1}-{end_idx}")
             
             # Process current batch concurrently
             with ThreadPoolExecutor(max_workers=batch_size) as executor:
-                # Submit all systems in current batch
-                future_to_system = {
-                    executor.submit(process_system, system, today): system 
-                    for system in batch_systems
-                }
+                # Submit all items in current batch
+                future_to_item = {}
+                for item, item_type in batch_items:
+                    if item_type == 'system':
+                        future_to_item[executor.submit(process_system, item, today)] = (item, item_type)
+                    elif item_type == 'inverter':
+                        future_to_item[executor.submit(process_inverter, item, today)] = (item, item_type)
                 
-                # Wait for all systems in this batch to complete
-                for future in as_completed(future_to_system):
-                    system = future_to_system[future]
+                # Wait for all items in this batch to complete
+                for future in as_completed(future_to_item):
+                    item, item_type = future_to_item[future]
                     try:
                         results = future.result()
                         
@@ -583,19 +930,29 @@ def process_systems_concurrently():
                         failed_entries = len(results) - successful_entries
                         
                         update_stats_thread_safe(stats, 'consolidated_entries_stored', successful_entries)
-                        update_stats_thread_safe(stats, 'systems_processed')
-                        update_stats_thread_safe(stats, 'api_calls_made', 5)  # Daily: 2 calls, Others: 1 each = 5 total
+                        
+                        if item_type == 'system':
+                            update_stats_thread_safe(stats, 'systems_processed')
+                            update_stats_thread_safe(stats, 'api_calls_made', 5)  # Daily: 2 calls, Others: 1 each = 5 total
+                            item_name = item.name
+                        elif item_type == 'inverter':
+                            update_stats_thread_safe(stats, 'inverters_processed')
+                            update_stats_thread_safe(stats, 'api_calls_made', 5)  # Daily: 2 calls, Others: 1 each = 5 total
+                            item_name = item.device_id
                         
                         if failed_entries > 0:
                             update_stats_thread_safe(stats, 'errors', failed_entries)
                         
-                        logger.info(f"✅ Completed system {system.name}: {successful_entries}/4 entries stored")
+                        logger.info(f"✅ Completed {item_type} {item_name}: {successful_entries}/4 entries stored")
                         
                     except Exception as e:
-                        logger.error(f"❌ Error processing system {system.name}: {str(e)}")
+                        if item_type == 'system':
+                            logger.error(f"❌ Error processing system {item.name}: {str(e)}")
+                        elif item_type == 'inverter':
+                            logger.error(f"❌ Error processing inverter {item.device_id}: {str(e)}")
                         update_stats_thread_safe(stats, 'errors', 4)  # Count all 4 periods as failed
             
-            # Add 3-second delay between batches (except after the last batch)
+            # Add delay between batches (except after the last batch)
             if batch_num < total_batches - 1:
                 logger.info(f"Batch {batch_num + 1} completed. Waiting 0.5 seconds before next batch...")
                 time.sleep(0.5)
@@ -609,9 +966,12 @@ def process_systems_concurrently():
         logger.info("=== POLLING COMPLETED ===")
         logger.info(f"⏱️  Total execution time: {execution_time:.2f} seconds")
         logger.info(f"🏭 Systems processed: {stats['systems_processed']}")
+        logger.info(f"🔌 Inverters processed: {stats['inverters_processed']}")
         logger.info(f"💾 Consolidated entries stored: {stats['consolidated_entries_stored']}")
         logger.info(f"🌐 Total API calls made: {stats['api_calls_made']}")
-        logger.info(f"⚡ Average time per system: {execution_time/len(pv_systems):.2f} seconds")
+        total_items = len(pv_systems) + len(inverters)
+        if total_items > 0:
+            logger.info(f"⚡ Average time per item: {execution_time/total_items:.2f} seconds")
         logger.info(f"❌ Errors: {stats['errors']}")
         
         if stats['errors'] > 0:
