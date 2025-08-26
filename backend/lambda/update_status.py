@@ -26,8 +26,8 @@ import os
 import json
 import logging
 import boto3
-from datetime import datetime
-from typing import List, Dict, Any
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
 from decimal import Decimal
 import botocore.config
 
@@ -170,7 +170,182 @@ def get_current_system_status(system_id: str) -> Dict[str, Any]:
             'lastUpdated': None
         }
 
-def update_system_status(system_id: str, green_inverters: List[str], red_inverters: List[str], moon_inverters: List[str]) -> bool:
+def is_daylight_saving_time(dt: datetime) -> bool:
+    """Determine if a given datetime falls within US daylight saving time period"""
+    year = dt.year
+    
+    # DST starts on the second Sunday in March
+    march_first = datetime(year, 3, 1)
+    march_first_weekday = march_first.weekday()  # Monday = 0, Sunday = 6
+    days_until_first_sunday = (6 - march_first_weekday) % 7
+    first_sunday_march = march_first + timedelta(days=days_until_first_sunday)
+    second_sunday_march = first_sunday_march + timedelta(days=7)
+    dst_start = second_sunday_march.replace(hour=2)  # 2 AM
+    
+    # DST ends on the first Sunday in November
+    nov_first = datetime(year, 11, 1)
+    nov_first_weekday = nov_first.weekday()
+    days_until_first_sunday = (6 - nov_first_weekday) % 7
+    first_sunday_nov = nov_first + timedelta(days=days_until_first_sunday)
+    dst_end = first_sunday_nov.replace(hour=2)  # 2 AM
+    
+    return dst_start <= dt < dst_end
+
+def get_local_date_from_utc(utc_timestamp: str, system_timezone: Optional[str] = None) -> str:
+    """Convert UTC timestamp to local date string (YYYY-MM-DD) based on system timezone"""
+    try:
+        # Parse UTC timestamp
+        if utc_timestamp.endswith('Z'):
+            utc_timestamp = utc_timestamp[:-1] + '+00:00'
+        
+        utc_dt = datetime.fromisoformat(utc_timestamp.replace('Z', '+00:00'))
+        
+        # Convert to system timezone if provided
+        if system_timezone:
+            is_dst = is_daylight_saving_time(utc_dt)
+            
+            if system_timezone == "America/New_York":
+                # Eastern Time: UTC-5 (EST) or UTC-4 (EDT)
+                offset_hours = 4 if is_dst else 5
+                local_dt = utc_dt - timedelta(hours=offset_hours)
+            elif system_timezone == "America/Chicago":
+                # Central Time: UTC-6 (CST) or UTC-5 (CDT)
+                offset_hours = 5 if is_dst else 6
+                local_dt = utc_dt - timedelta(hours=offset_hours)
+            else:
+                logger.warning(f"Unknown timezone {system_timezone}, using UTC")
+                local_dt = utc_dt
+        else:
+            # Fallback to UTC if no timezone provided
+            local_dt = utc_dt
+        
+        return local_dt.strftime("%Y-%m-%d")
+        
+    except Exception as e:
+        logger.error(f"Error converting UTC timestamp to local date: {str(e)}")
+        # Fallback to current UTC date
+        return datetime.utcnow().strftime("%Y-%m-%d")
+
+def log_historical_status(device_id: str, system_id: str, new_status: str, timestamp: str, system_timezone: Optional[str] = None) -> bool:
+    """Log historical status change for a device on the current date"""
+    try:
+        # Get local date based on system timezone
+        local_date = get_local_date_from_utc(timestamp, system_timezone)
+        
+        logger.info(f"Logging historical status for device {device_id} on date {local_date}: {new_status}")
+        
+        # Try to get existing historical record for this date
+        pk = f'Inverter#{device_id}'
+        sk = f'DAILYSTATUS#{local_date}'
+        
+        try:
+            response = table.get_item(
+                Key={
+                    'PK': pk,
+                    'SK': sk
+                }
+            )
+            
+            if 'Item' in response:
+                # Update existing record
+                existing_item = response['Item']
+                historic_status = existing_item.get('historicStatus', [])
+            else:
+                # Create new record
+                historic_status = []
+                
+        except Exception as get_error:
+            logger.warning(f"Error getting existing historical record: {str(get_error)}, creating new one")
+            historic_status = []
+        
+        # Append new status entry
+        status_entry = {
+            'status': new_status,
+            'time': timestamp  # Keep UTC timestamp for consistency
+        }
+        historic_status.append(status_entry)
+        
+        # Create/update the historical record
+        historical_record = {
+            'PK': pk,
+            'SK': sk,
+            'deviceId': device_id,
+            'pvSystemId': system_id,
+            'date': local_date,
+            'lastUpdated': datetime.utcnow().isoformat(),
+            'historicStatus': historic_status
+        }
+        
+        # Update DynamoDB
+        table.put_item(Item=historical_record)
+        
+        logger.info(f"✅ Historical status logged for device {device_id} on {local_date}: {new_status} at {timestamp}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error logging historical status for device {device_id}: {str(e)}")
+        return False
+
+def log_system_daily_status(system_id: str, new_status: str, timestamp: str, system_timezone: Optional[str] = None) -> bool:
+    """Log daily status change for a system"""
+    try:
+        # Get local date based on system timezone
+        local_date = get_local_date_from_utc(timestamp, system_timezone)
+        
+        logger.info(f"Logging daily status for system {system_id} on date {local_date}: {new_status}")
+        
+        # Try to get existing daily record for this date
+        pk = f'System#{system_id}'
+        sk = f'DAILYSTATUS#{local_date}'
+        
+        try:
+            response = table.get_item(
+                Key={
+                    'PK': pk,
+                    'SK': sk
+                }
+            )
+            
+            if 'Item' in response:
+                # Update existing record
+                existing_item = response['Item']
+                historic_status = existing_item.get('historicStatus', [])
+            else:
+                # Create new record
+                historic_status = []
+                
+        except Exception as get_error:
+            logger.warning(f"Error getting existing system daily record: {str(get_error)}, creating new one")
+            historic_status = []
+        
+        # Append new status entry
+        status_entry = {
+            'status': new_status,
+            'time': timestamp  # Keep UTC timestamp for consistency
+        }
+        historic_status.append(status_entry)
+        
+        # Create/update the daily record
+        daily_record = {
+            'PK': pk,
+            'SK': sk,
+            'systemId': system_id,
+            'date': local_date,
+            'lastUpdated': datetime.utcnow().isoformat(),
+            'historicStatus': historic_status
+        }
+        
+        # Update DynamoDB
+        table.put_item(Item=daily_record)
+        
+        logger.info(f"✅ Daily status logged for system {system_id} on {local_date}: {new_status} at {timestamp}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error logging daily status for system {system_id}: {str(e)}")
+        return False
+
+def update_system_status(system_id: str, green_inverters: List[str], red_inverters: List[str], moon_inverters: List[str], timestamp: str = None, system_timezone: str = None) -> bool:
     """Update system status in DynamoDB"""
     try:
         # Determine overall system status
@@ -218,6 +393,18 @@ def update_system_status(system_id: str, green_inverters: List[str], red_inverte
         # Update DynamoDB
         table.put_item(Item=status_record)
         
+        # Log system daily status if we have timestamp and status changed
+        if timestamp and current_overall != overall_status:
+            daily_status_success = log_system_daily_status(system_id, overall_status, timestamp, system_timezone)
+            if daily_status_success:
+                logger.info(f"✅ Daily status logged for system {system_id}")
+            else:
+                logger.warning(f"⚠️ Failed to log daily status for system {system_id}")
+        elif not timestamp:
+            logger.debug(f"No timestamp provided for system {system_id}, skipping daily status logging")
+        else:
+            logger.debug(f"System {system_id} status unchanged, skipping daily status logging")
+        
         # Log the update
         status_emoji = {"green": "✅", "red": "🔴", "moon": "🌙"}.get(overall_status, "❓")
         logger.info(f"{status_emoji} Updated system {system_id} status to {overall_status}")
@@ -229,10 +416,20 @@ def update_system_status(system_id: str, green_inverters: List[str], red_inverte
         logger.error(f"Error updating system status for {system_id}: {str(e)}")
         return False
 
-def process_device_status_change(device_id: str, system_id: str, new_status: str, previous_status: str) -> bool:
+def process_device_status_change(device_id: str, system_id: str, new_status: str, previous_status: str, timestamp: str = None, system_timezone: str = None) -> bool:
     """Process a single device status change and update system status if needed"""
     try:
         logger.info(f"Processing device status change: {device_id} ({system_id}) {previous_status} → {new_status}")
+        
+        # Log historical status change if we have timestamp
+        if timestamp:
+            historical_success = log_historical_status(device_id, system_id, new_status, timestamp, system_timezone)
+            if historical_success:
+                logger.info(f"✅ Historical status logged for device {device_id}")
+            else:
+                logger.warning(f"⚠️ Failed to log historical status for device {device_id}")
+        else:
+            logger.warning(f"No timestamp provided for device {device_id}, skipping historical logging")
         
         # Get current status of all inverters for this system
         inverter_statuses = get_inverter_statuses(system_id)
@@ -242,7 +439,9 @@ def process_device_status_change(device_id: str, system_id: str, new_status: str
             system_id,
             inverter_statuses['green'],
             inverter_statuses['red'],
-            inverter_statuses['moon']
+            inverter_statuses['moon'],
+            timestamp,
+            system_timezone
         )
         
         if success:
@@ -265,7 +464,7 @@ def lambda_handler(event, context):
         processed_count = 0
         success_count = 0
         
-        # Process each SNS record
+                        # Process each SNS record
         for record in event.get('Records', []):
             if record.get('EventSource') == 'aws:sns':
                 try:
@@ -278,6 +477,8 @@ def lambda_handler(event, context):
                     system_id = message_data.get('pvSystemId')
                     new_status = message_data.get('newStatus')
                     previous_status = message_data.get('previousStatus')
+                    timestamp = message_data.get('timestamp')
+                    system_timezone = message_data.get('timezone')
                     
                     if not all([device_id, system_id, new_status, previous_status]):
                         logger.warning(f"Incomplete message data: {message_data}")
@@ -286,7 +487,10 @@ def lambda_handler(event, context):
                     processed_count += 1
                     
                     # Process the device status change
-                    success = process_device_status_change(device_id, system_id, new_status, previous_status)
+                    success = process_device_status_change(
+                        device_id, system_id, new_status, previous_status, 
+                        timestamp, system_timezone
+                    )
                     
                     if success:
                         success_count += 1
@@ -315,121 +519,4 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
-
-
-def get_all_system_ids() -> List[str]:
-    """Fetch all SystemIds by querying for PK begins with 'System#' and SK = 'PROFILE'"""
-    system_ids = []
-    
-    try:
-        # Initial scan request
-        response = table.scan(
-            FilterExpression='begins_with(PK, :prefix) AND SK = :sk',
-            ExpressionAttributeValues={
-                ':prefix': 'System#',
-                ':sk': 'PROFILE'
-            }
-        )
-        
-        # Process initial batch
-        for item in response['Items']:
-            # Extract system ID from PK (remove 'System#' prefix)
-            system_id = item['PK'].replace('System#', '')
-            system_ids.append(system_id)
-            
-        logger.info(f"Found {len(response['Items'])} systems in initial batch")
-        
-        # Handle pagination
-        while 'LastEvaluatedKey' in response:
-            response = table.scan(
-                ExclusiveStartKey=response['LastEvaluatedKey'],
-                FilterExpression='begins_with(PK, :prefix) AND SK = :sk',
-                ExpressionAttributeValues={
-                    ':prefix': 'System#',
-                    ':sk': 'PROFILE'
-                }
-            )
-            
-            # Process paginated batch
-            for item in response['Items']:
-                system_id = item['PK'].replace('System#', '')
-                system_ids.append(system_id)
-                
-            logger.info(f"Found {len(response['Items'])} systems in paginated batch")
-            
-        logger.info(f"Total systems found: {len(system_ids)}")
-        return system_ids
-        
-    except Exception as e:
-        logger.error(f"Error fetching system IDs: {str(e)}")
-        return []
-
-
-def create_test_event(system_id: str) -> Dict[str, Any]:
-    """Create a test SNS event for triggering lambda handler"""
-    message_data = {
-        'deviceId': '1234',
-        'pvSystemId': system_id,
-        'newStatus': 'test',
-        'previousStatus': 'test'
-    }
-    
-    event = {
-        'Records': [
-            {
-                'EventSource': 'aws:sns',
-                'Sns': {
-                    'Message': json.dumps(message_data)
-                }
-            }
-        ]
-    }
-    
-    return event
-
-
-if __name__ == "__main__":
-    print("=== FETCHING ALL SYSTEM IDS AND TRIGGERING LAMBDA ===")
-    
-    # Fetch all system IDs
-    system_ids = get_all_system_ids()
-    
-    if not system_ids:
-        print("No systems found!")
-        exit(1)
-    
-    print(f"Found {len(system_ids)} systems. Processing each one...")
-    
-    # Process each system
-    processed_count = 0
-    success_count = 0
-    
-    for system_id in system_ids:
-        try:
-            print(f"\nProcessing system: {system_id}")
-            
-            # Create test event
-            event = create_test_event(system_id)
-            
-            # Trigger lambda handler
-            context = None  # Mock context for testing
-            result = lambda_handler(event, context)
-            
-            processed_count += 1
-            
-            if result.get('statusCode') == 200:
-                success_count += 1
-                print(f"✅ Successfully processed system {system_id}")
-            else:
-                print(f"❌ Failed to process system {system_id}: {result}")
-                
-        except Exception as e:
-            print(f"❌ Error processing system {system_id}: {str(e)}")
-            processed_count += 1
-    
-    print(f"\n=== PROCESSING COMPLETE ===")
-    print(f"📊 Total systems processed: {processed_count}")
-    print(f"✅ Successful: {success_count}")
-    print(f"❌ Failed: {processed_count - success_count}")
-
 
