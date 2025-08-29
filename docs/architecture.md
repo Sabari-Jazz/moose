@@ -6,7 +6,10 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 
 ## High-Level Architecture
 
-![Alt text describing the image](./aws_architecture.png)
+![AWS Architecture Image](./aws_architecture.png)
+
+## Chatbot Pipeline
+![Chatbot Pipeline Image](./chatbot_pipeline.png)
 
 ## Component Details
 
