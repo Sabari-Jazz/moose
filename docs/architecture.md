@@ -6,55 +6,7 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 
 ## High-Level Architecture
 
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        MA[Mobile App<br/>React Native + Expo]
-    end
-    
-    subgraph "API Gateway Layer"
-        AG[AWS API Gateway<br/>+ Lambda Functions]
-    end
-    
-    subgraph "Application Layer"
-        CS[Chat Service<br/>FastAPI + OpenAI]
-        SDS[Solar Data Service<br/>FastAPI]
-        UMS[User Management<br/>FastAPI]
-        NS[Notification Service<br/>SNS + SES]
-    end
-    
-    subgraph "Data Layer"
-        DDB[DynamoDB<br/>Primary Database]
-        SB[Supabase<br/>Feedback Data]
-        PC[Pinecone<br/>Vector Database]
-    end
-    
-    subgraph "External APIs"
-        SW[SolarWeb API<br/>Solar Data]
-        OAI[OpenAI API<br/>GPT-4.1-mini]
-    end
-    
-    subgraph "Infrastructure"
-        CW[CloudWatch<br/>Logging & Monitoring]
-        S3[S3<br/>Static Assets]
-    end
-    
-    MA --> AG
-    AG --> CS
-    AG --> SDS
-    AG --> UMS
-    CS --> OAI
-    CS --> PC
-    SDS --> SW
-    CS --> DDB
-    SDS --> DDB
-    UMS --> DDB
-    UMS --> SB
-    NS --> DDB
-    AG --> CW
-    CS --> CW
-    SDS --> CW
-```
+![Alt text describing the image](./aws_architecture.png)
 
 ## Component Details
 
@@ -64,8 +16,7 @@ graph TB
 - React Native 0.76.9
 - Expo SDK 52.0.46
 - TypeScript
-- React Native Paper (UI Components)
-- AWS Amplify (Authentication)
+
 
 **Key Features:**
 - Real-time solar system monitoring dashboard
@@ -101,11 +52,10 @@ graph TB
 **Purpose:** Fetch, process, and serve solar system performance data
 
 **Key Features:**
-- SolarWeb API integration
-- Real-time and historical data processing
-- System status calculation (green/red/moon phases)
-- Energy production and earnings calculations
-- CO2 savings computations
+- Includes API Endpoints for any System related queries
+- Energy production and earnings 
+- CO2 savings 
+- System/Inverter Profile Information
 
 **API Endpoints:**
 - `GET /api/systems/{system_id}/consolidated-daily`
@@ -150,11 +100,16 @@ graph TB
 ```
 PK: System#{system_id}        SK: STATUS
 PK: System#{system_id}        SK: PROFILE  
-PK: System#{system_id}        SK: DAILY#{date}
-PK: System#{system_id}        SK: WEEKLY#{week}
-PK: System#{system_id}        SK: MONTHLY#{month}
+PK: System#{system_id}        SK: DATA#DAILY#{date}
+PK: System#{system_id}        SK: DATA#WEEKLY#{week}
+PK: System#{system_id}        SK: DATA#MONTHLY#{month}
+PK: Inverter#{inverter_id}        SK: STATUS
+PK: Inverter#{inverter_id}        SK: PROFILE  
+PK: Inverter#{inverter_id}        SK: DATA#DAILY#{date}
+PK: Inverter#{inverter_id}        SK: DATA#WEEKLY#{week}
+PK: Inverter#{inverter}        SK: DATA#MONTHLY#{month}
 PK: User#{user_id}           SK: PROFILE
-PK: User#{user_id}           SK: SYSTEMS
+PK: User#{user_id}           SK: SYSTEM#{SystemId}
 PK: Device#{device_id}       SK: PROFILE
 PK: CHAT#{user_id}          SK: CONVERSATION#{timestamp}
 PK: Incident#{incident_id}   SK: DETAILS
@@ -263,10 +218,6 @@ The system uses a sophisticated status calculation algorithm:
 - Custom metrics for system performance
 - Error tracking and alerting (planned)
 
-**Logging Strategy:**
-- Structured logging with correlation IDs
-- Different log levels (INFO, WARN, ERROR)
-- Conversation and API call logging
 
 ### Security Considerations
 
@@ -281,7 +232,6 @@ The system uses a sophisticated status calculation algorithm:
 - Row-level security in Supabase
 
 **API Security:**
-- CORS configuration for web access
 - Input validation using Pydantic models
 - Rate limiting (planned)
 
@@ -307,10 +257,6 @@ The system uses a sophisticated status calculation algorithm:
 - DynamoDB connection pooling (50 connections)
 - Caching strategies for frequently accessed data
 
-**Mobile App Optimization:**
-- Lazy loading for heavy components
-- Local caching with AsyncStorage
-- Background fetch for data updates
 
 ### Scalability Design
 
@@ -349,4 +295,4 @@ The system uses a sophisticated status calculation algorithm:
 - **Deployment Flexibility:** Deploy and update services independently
 - **Error Isolation:** Failures in one service don't affect others
 
-This architecture provides a robust, scalable foundation for the Solar O&M Platform while maintaining flexibility for future enhancements and integrations.
+
