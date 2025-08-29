@@ -108,24 +108,23 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 - Inverter-level daily data collection
 - Earnings rate calculations using system-specific rates
 
-**Scheduling:** Runs periodically via EventBridge or manual trigger
+**Scheduling:** Runs every 30 minutes via EventBridge Scheduler
 
 ##### 6 Device Status Polling (`device_status_polling.py`)
 **Purpose:** Monitor real-time status of individual solar inverters
 
 **Key Features:**
-- Monitors individual inverters instead of systems
+- Monitors individual inverters production
 - Real-time power output and error condition monitoring
 - Intelligent status logic based on time of day and moon periods
-- Timezone-aware calculations (America/New_York, America/Chicago)
 - SNS notifications for status changes only
 
 **Status Logic:**
 - **Green:** Power > 0 during daylight hours, no critical errors
-- **Red:** Power = 0 during expected daylight hours, or critical errors
+- **Red:** Power = 0 during expected daylight hours
 - **Moon:** Nighttime hours (sunset-1h to sunrise+1h)
 
-**Scheduling:** Runs every 15 minutes via EventBridge
+**Scheduling:** Runs every 15 minutes via EventBridge Scheduler
 
 #### 7. Notification Services
 
@@ -170,7 +169,7 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 - Scans all inverters for red status > 15 hours
 - Sends SNS notifications for persistent issues
 - Concurrent processing for efficiency
-- Daily scheduling via EventBridge
+- Daily scheduling via EventBridge Scheduler
 
 **Logic:**
 - Queries all inverter status records
@@ -190,7 +189,7 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 **Status Aggregation Logic:**
 - **Red System:** Any inverter is red
 - **Moon System:** All inverters are moon phase
-- **Green System:** All other cases
+- **Green System:** All inverters are green
 
 ##### 10. Automatic Reports (`automatic_report.py`)
 **Purpose:** Send monthly performance reports via SMS
