@@ -86,7 +86,124 @@ The Solar Operations & Maintenance (O&M) Platform is a cloud-native application 
 **Key Features:**
 - Google Forms integration for technician responses
 - Email notifications via AWS SES
+- Push notifications to users
 - Incident status updates
+
+##### 5. System Data Polling (`polling.py`)
+**Purpose:** Collect comprehensive solar system performance data from SolarWeb API
+
+**Key Features:**
+- Polls SolarWeb API for all PV systems and inverters
+- Stores daily, weekly, monthly, and yearly aggregated data
+- Batch processing with rate limiting (8 systems per batch, 3-second delays)
+- Concurrent processing with thread pooling
+- Comprehensive error handling and retry logic
+
+**Data Collection:**
+- Daily: Aggregated data + flow data (2 API calls per system)
+- Weekly/Monthly/Yearly: Aggregated data only (1 API call per system)
+- Inverter-level daily data collection
+- Earnings rate calculations using system-specific rates
+
+**Scheduling:** Runs periodically via EventBridge or manual trigger
+
+##### 6 Device Status Polling (`device_status_polling.py`)
+**Purpose:** Monitor real-time status of individual solar inverters
+
+**Key Features:**
+- Monitors individual inverters instead of systems
+- Real-time power output and error condition monitoring
+- Intelligent status logic based on time of day and moon periods
+- Timezone-aware calculations (America/New_York, America/Chicago)
+- SNS notifications for status changes only
+
+**Status Logic:**
+- **Green:** Power > 0 during daylight hours, no critical errors
+- **Red:** Power = 0 during expected daylight hours, or critical errors
+- **Moon:** Nighttime hours (sunset-1h to sunrise+1h)
+
+**Scheduling:** Runs every 15 minutes via EventBridge
+
+#### 7. Notification Services
+
+##### 7.1 User Notifications (`notify_user.py`)
+**Purpose:** Send push notifications to users for system status changes
+
+**Key Features:**
+- Processes SNS messages from device status polling
+- Identifies users with system access permissions
+- Batch sends Expo push notifications
+- Creates incident records for red status changes
+- Schedules technician notifications (1-hour delay)
+
+**Notification Flow:**
+1. Receives SNS message with status change
+2. Queries users with system access
+3. Retrieves user device tokens
+4. Sends batch push notifications via Expo
+5. Creates incident record if status is red
+6. Schedules technician notification
+
+##### 7.2 Technician Notifications (`notify_technician.py`)
+**Purpose:** Send email notifications to technicians for unresolved incidents
+
+**Key Features:**
+- Triggered by EventBridge scheduler (1 hour after incident)
+- Checks incident status before sending
+- Sends detailed email via AWS SES
+- Includes system information and incident details
+- Cleans up scheduled tasks after processing
+
+**Email Content:**
+- Incident details and timestamps
+- System location and specifications
+- Direct links to system monitoring
+- Contact information for user
+
+##### 8 Red Code Reminders (`red_code_reminder.py`)
+**Purpose:** Daily reminders for systems in prolonged red status
+
+**Key Features:**
+- Scans all inverters for red status > 15 hours
+- Sends SNS notifications for persistent issues
+- Concurrent processing for efficiency
+- Daily scheduling via EventBridge
+
+**Logic:**
+- Queries all inverter status records
+- Filters for red status > 15 hours old
+- Sends "Daily Reminder" SNS messages
+- Processes up to 10 inverters concurrently
+
+##### 9 System Status Updates (`update_status.py`)
+**Purpose:** Aggregate individual device statuses into system-level status
+
+**Key Features:**
+- Subscribes to SNS notifications from device polling
+- Calculates system status from individual inverter statuses
+- Updates DynamoDB only when status changes
+- Historical status logging with timezone support
+
+**Status Aggregation Logic:**
+- **Red System:** Any inverter is red
+- **Moon System:** All inverters are moon phase
+- **Green System:** All other cases
+
+##### 10. Automatic Reports (`automatic_report.py`)
+**Purpose:** Send monthly performance reports via SMS
+
+**Key Features:**
+- Queries users with phone numbers
+- Aggregates monthly system performance data
+- Calculates KPIs (production, earnings, CO2 savings)
+- Sends formatted SMS reports via SNS
+
+**Report Content:**
+- Monthly energy production (kWh)
+- Earnings calculations
+- CO2 savings impact
+- System-by-system breakdown
+- Aggregated portfolio performance
 
 ### Data Architecture
 

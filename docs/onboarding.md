@@ -71,8 +71,7 @@ cp ../.env.example .env
 aws configure
 # Enter your AWS Access Key ID, Secret Access Key, and region (us-east-1)
 
-# Verify DynamoDB access
-aws dynamodb describe-table --table-name Moose-DDB --region us-east-1
+
 ```
 
 ## 🔧 Environment Variables
@@ -99,12 +98,6 @@ Copy `.env.example` to `.env` and configure the following critical variables:
 
 ## 🏃‍♂️ Running the Application
 
-### Backend Development Server
-```bash
-cd backend/local_development
-python app.py
-# Server runs on http://localhost:8000
-```
 
 ### Mobile App
 ```bash
@@ -121,92 +114,8 @@ npm run web     # Web browser
 
 ## 🧪 Testing Your Setup
 
-### 1. Backend Health Check
-```bash
-curl http://localhost:8000/health
-# Should return: {"status": "healthy"}
-```
-
-### 2. DynamoDB Connection
-```bash
-# From backend directory
-python -c "import boto3; print(boto3.resource('dynamodb', region_name='us-east-1').Table('Moose-DDB').table_status)"
-```
-
-### 3. Mobile App Connection
+### 1. Mobile App Connection
 - Open the mobile app
 - Try logging in with test credentials
 - Verify dashboard loads with solar system data
 
-## 📁 Project Structure
-
-```
-Jazz/
-├── backend/                    # Python backend services
-│   ├── lambda/                # AWS Lambda functions
-│   ├── helper/                # Utility scripts
-│   ├── local_development/     # Local dev server
-│   └── requirements.txt       # Python dependencies
-├── expo-moose/                # React Native mobile app
-│   ├── app/                   # App screens and navigation
-│   ├── components/            # Reusable UI components
-│   ├── api/                   # API integration
-│   ├── utils/                 # Utility functions
-│   └── package.json           # Node.js dependencies
-└── docs/                      # Documentation
-```
-
-## 🔍 Key Components to Understand
-
-### Backend Services
-- **Chat Service**: AI-powered chatbot with RAG (Retrieval Augmented Generation)
-- **Solar Data Service**: Fetches and processes solar system data
-- **User Management**: Authentication and user profile management
-- **Notification Service**: Handles alerts and technician communications
-
-### Mobile App Features
-- **Dashboard**: Real-time solar system monitoring
-- **Chat**: AI assistant for operations queries
-- **Map View**: Geographic visualization of solar installations
-- **Incident Management**: Report and track system issues
-
-## 🆘 Common Issues & Solutions
-
-### Backend Issues
-**DynamoDB Access Denied**
-```bash
-# Check AWS credentials
-aws sts get-caller-identity
-# Verify IAM permissions for DynamoDB
-```
-
-**OpenAI API Errors**
-- Verify API key is valid and has sufficient credits
-- Check model name: should be "gpt-4.1-mini"
-
-### Mobile App Issues
-**Expo Build Fails**
-```bash
-# Clear cache and reinstall
-expo r -c
-npm install
-```
-
-**Authentication Issues**
-- Verify Supabase credentials in .env
-- Check AWS Cognito configuration
-
-## 📚 Next Steps
-
-1. **Read the Architecture Documentation**: `docs/architecture.md`
-2. **Review API Documentation**: `docs/api/openapi.yaml`
-3. **Understand the Testing Strategy**: `docs/testing.md`
-4. **Set up your development workflow**: `CONTRIBUTING.md`
-
-## 🤝 Getting Help
-
-- **Code Questions**: Check existing documentation or ask the team
-- **AWS Issues**: Refer to CloudWatch logs
-- **Mobile Issues**: Use Expo development tools and React Native debugger
-
-Welcome to the team! 🎉
