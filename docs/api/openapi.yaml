@@ -1,0 +1,1203 @@
+openapi: 3.0.3
+info:
+  title: Solar O&M Platform API
+  description: |
+    Comprehensive API for the Solar Operations & Maintenance Platform.
+    
+    This API provides endpoints for managing solar systems, user interactions,
+    chat services, and notifications. The platform supports real-time monitoring,
+    AI-powered assistance, and comprehensive incident management.
+    
+    ## Authentication
+    All endpoints require JWT authentication via AWS Cognito.
+    Include the token in the Authorization header: `Bearer <jwt_token>`
+    
+    ## Rate Limiting
+    API calls are rate-limited per user:
+    - Chat endpoints: 10 requests/minute
+    - Data endpoints: 100 requests/minute
+    - Health checks: No limit
+    
+    ## Error Handling
+    The API uses standard HTTP status codes and returns error details in JSON format.
+  version: 1.0.0
+  contact:
+    name: Solar O&M Platform Team
+    email: support@solarom.com
+  license:
+    name: Proprietary
+    
+servers:
+  - url: https://api.solarom.com
+    description: Production server
+  - url: https://staging-api.solarom.com
+    description: Staging server
+  - url: http://localhost:8000
+    description: Development server
+
+security:
+  - BearerAuth: []
+
+paths:
+  # Health Check Endpoints
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the health status of the API
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2024-01-15T10:00:00Z"
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+  # Chat Service Endpoints
+  /api/chat:
+    post:
+      tags:
+        - Chat
+      summary: Process chat message
+      description: |
+        Send a message to the AI-powered chat assistant. The assistant can answer
+        questions about solar systems, provide data insights, and help with
+        operations and maintenance tasks.
+      operationId: processChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+            examples:
+              system_status_query:
+                summary: System status query
+                value:
+                  username: "john_doe"
+                  message: "What is the status of system bf915090-5f59-4128-a206-46c73f2f779d?"
+                  user_id: "user123"
+                  jwtToken: "eyJhbGciOiJSUzI1NiIs..."
+              general_question:
+                summary: General solar question
+                value:
+                  username: "jane_smith"
+                  message: "How much energy did my systems produce today?"
+                  user_id: "user456"
+                  jwtToken: "eyJhbGciOiJSUzI1NiIs..."
+      responses:
+        '200':
+          description: Chat response generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                system_status_response:
+                  summary: System status response
+                  value:
+                    response: "System bf915090-5f59-4128-a206-46c73f2f779d is currently operating normally with a green status. It's producing 1,245W and has generated 45.2 kWh today."
+                    source_documents:
+                      - content: "System status documentation"
+                        metadata:
+                          source: "system_manual"
+                          relevance: 0.95
+                    chart_data:
+                      chart_type: "line"
+                      data_type: "energy_production"
+                      title: "Daily Energy Production"
+                      x_axis_label: "Time"
+                      y_axis_label: "Power (kW)"
+                      data_points:
+                        - x: "06:00"
+                          y: 0.2
+                        - x: "12:00"
+                          y: 1.8
+                        - x: "18:00"
+                          y: 0.5
+                      time_period: "today"
+                      total_value: 45.2
+                      unit: "kWh"
+                      system_name: "Main Solar Array"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Solar System Data Endpoints
+  /api/systems/{systemId}/consolidated-daily:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get daily consolidated system data
+      description: Retrieve consolidated daily performance data for a specific solar system
+      operationId: getSystemDailyData
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          description: Unique identifier for the solar system
+          schema:
+            type: string
+            format: uuid
+            example: "bf915090-5f59-4128-a206-46c73f2f779d"
+        - name: date
+          in: query
+          required: false
+          description: Specific date for data retrieval (defaults to today)
+          schema:
+            type: string
+            format: date
+            example: "2024-01-15"
+      responses:
+        '200':
+          description: Daily system data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemDailyData'
+        '400':
+          description: Invalid system ID or date format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Access denied to this system
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: System not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/systems/{systemId}/consolidated-weekly:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get weekly consolidated system data
+      description: Retrieve consolidated weekly performance data for a specific solar system
+      operationId: getSystemWeeklyData
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: weekStart
+          in: query
+          required: false
+          description: Start date of the week (defaults to current week)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Weekly system data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemWeeklyData'
+
+  /api/systems/{systemId}/consolidated-monthly:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get monthly consolidated system data
+      description: Retrieve consolidated monthly performance data for a specific solar system
+      operationId: getSystemMonthlyData
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: month
+          in: query
+          required: false
+          description: Month in YYYY-MM format (defaults to current month)
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}$'
+            example: "2024-01"
+      responses:
+        '200':
+          description: Monthly system data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemMonthlyData'
+
+  /api/systems/{systemId}/profile:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get system profile information
+      description: Retrieve detailed profile and configuration information for a solar system
+      operationId: getSystemProfile
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: System profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemProfile'
+
+  /api/systems/{systemId}/status:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get current system status
+      description: |
+        Retrieve the current operational status of a solar system.
+        
+        Status values:
+        - `green`: System operating normally during daytime
+        - `red`: System has issues or no production during expected hours
+        - `offline`: System is offline or not communicating
+        - `moon`: Nighttime status (green systems show moon, red stays red)
+      operationId: getSystemStatus
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: System status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+
+  /api/systems/{systemId}/inverters:
+    get:
+      tags:
+        - Solar Systems
+      summary: Get system inverters
+      description: Retrieve list of inverters associated with a solar system
+      operationId: getSystemInverters
+      parameters:
+        - name: systemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: System inverters retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inverters:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InverterSummary'
+
+  # Inverter Endpoints
+  /api/inverters/{inverterId}/profile:
+    get:
+      tags:
+        - Inverters
+      summary: Get inverter profile
+      description: Retrieve detailed information about a specific inverter
+      operationId: getInverterProfile
+      parameters:
+        - name: inverterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Inverter profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InverterProfile'
+
+  /api/inverters/{inverterId}/daily-data:
+    get:
+      tags:
+        - Inverters
+      summary: Get daily inverter data
+      description: Retrieve daily performance data for a specific inverter
+      operationId: getInverterDailyData
+      parameters:
+        - name: inverterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Inverter daily data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InverterDailyData'
+
+  # User Management Endpoints
+  /api/user/{userId}/profile:
+    get:
+      tags:
+        - User Management
+      summary: Get user profile
+      description: Retrieve user profile information and preferences
+      operationId: getUserProfile
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  /api/user/{userId}/systems:
+    get:
+      tags:
+        - User Management
+      summary: Get user's accessible systems
+      description: Retrieve list of solar systems the user has access to
+      operationId: getUserSystems
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User systems retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  systems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemSummary'
+
+  /api/user/{userId}/incidents:
+    get:
+      tags:
+        - User Management
+      summary: Get user incidents
+      description: Retrieve incident reports associated with the user
+      operationId: getUserIncidents
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User incidents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incidents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+
+  # Device Management Endpoints
+  /api/device/register:
+    post:
+      tags:
+        - Device Management
+      summary: Register device for push notifications
+      description: Register a mobile device to receive push notifications
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistration'
+      responses:
+        '200':
+          description: Device registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+
+  /api/device/{userId}/{deviceId}:
+    delete:
+      tags:
+        - Device Management
+      summary: Unregister device
+      description: Remove device from push notification registry
+      operationId: unregisterDevice
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device unregistered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from AWS Cognito
+
+  schemas:
+    # Chat Service Schemas
+    ChatMessage:
+      type: object
+      required:
+        - username
+        - message
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Username of the person sending the message
+          example: "john_doe"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The chat message content
+          example: "What is the status of my solar system?"
+        user_id:
+          type: string
+          description: Unique user identifier
+          example: "user123"
+        jwtToken:
+          type: string
+          description: JWT authentication token
+          example: "eyJhbGciOiJSUzI1NiIs..."
+        portfolioSystems:
+          type: array
+          description: List of systems for portfolio mode
+          items:
+            $ref: '#/components/schemas/PortfolioSystem'
+
+    PortfolioSystem:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: System identifier
+          example: "bf915090-5f59-4128-a206-46c73f2f779d"
+        name:
+          type: string
+          description: System name
+          example: "Main Solar Array"
+        isPortfolio:
+          type: boolean
+          description: Whether this is a portfolio system
+          example: true
+
+    ChatResponse:
+      type: object
+      required:
+        - response
+      properties:
+        response:
+          type: string
+          description: The AI-generated response
+          example: "Your solar system is currently operating normally with a green status."
+        source_documents:
+          type: array
+          description: Documents used to generate the response
+          items:
+            $ref: '#/components/schemas/SourceDocument'
+        chart_data:
+          $ref: '#/components/schemas/ChartData'
+        conversation_id:
+          type: string
+          description: Unique conversation identifier
+          example: "conv_123456789"
+
+    SourceDocument:
+      type: object
+      properties:
+        content:
+          type: string
+          description: Content of the source document
+          example: "Solar system operational procedures..."
+        metadata:
+          type: object
+          description: Document metadata
+          additionalProperties: true
+          example:
+            source: "system_manual"
+            relevance: 0.95
+            page: 15
+
+    ChartData:
+      type: object
+      properties:
+        chart_type:
+          type: string
+          enum: [line, bar, pie, area]
+          default: line
+          description: Type of chart to display
+        data_type:
+          type: string
+          description: Type of data being displayed
+          example: "energy_production"
+        title:
+          type: string
+          description: Chart title
+          example: "Daily Energy Production"
+        x_axis_label:
+          type: string
+          description: X-axis label
+          example: "Time"
+        y_axis_label:
+          type: string
+          description: Y-axis label
+          example: "Power (kW)"
+        data_points:
+          type: array
+          description: Chart data points
+          items:
+            type: object
+            properties:
+              x:
+                oneOf:
+                  - type: string
+                  - type: number
+                description: X-axis value
+              y:
+                type: number
+                description: Y-axis value
+        time_period:
+          type: string
+          description: Time period covered by the data
+          example: "today"
+        total_value:
+          type: number
+          description: Total value for the period
+          example: 45.2
+        unit:
+          type: string
+          description: Unit of measurement
+          example: "kWh"
+        system_name:
+          type: string
+          description: Name of the system
+          example: "Main Solar Array"
+
+    # Solar System Schemas
+    SystemDailyData:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+          example: "bf915090-5f59-4128-a206-46c73f2f779d"
+        date:
+          type: string
+          format: date
+          example: "2024-01-15"
+        energy_production:
+          type: number
+          description: Total energy produced in kWh
+          example: 45.2
+        peak_power:
+          type: number
+          description: Peak power output in kW
+          example: 8.5
+        average_power:
+          type: number
+          description: Average power output in kW
+          example: 3.2
+        co2_savings:
+          type: number
+          description: CO2 savings in kg
+          example: 23.96
+        earnings:
+          type: number
+          description: Estimated earnings in USD
+          example: 18.08
+        status:
+          type: string
+          enum: [green, red, offline, moon]
+          example: "green"
+        weather:
+          $ref: '#/components/schemas/WeatherData'
+        hourly_data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HourlyData'
+
+    SystemWeeklyData:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+        week_start:
+          type: string
+          format: date
+        week_end:
+          type: string
+          format: date
+        total_energy:
+          type: number
+          description: Total energy for the week in kWh
+        average_daily_energy:
+          type: number
+          description: Average daily energy in kWh
+        total_co2_savings:
+          type: number
+          description: Total CO2 savings in kg
+        total_earnings:
+          type: number
+          description: Total earnings in USD
+        daily_breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyBreakdown'
+
+    SystemMonthlyData:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+        month:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+        total_energy:
+          type: number
+        average_daily_energy:
+          type: number
+        total_co2_savings:
+          type: number
+        total_earnings:
+          type: number
+        weekly_breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeeklyBreakdown'
+
+    SystemProfile:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Main Solar Array"
+        location:
+          $ref: '#/components/schemas/Location'
+        capacity:
+          type: number
+          description: System capacity in kW
+          example: 10.5
+        installation_date:
+          type: string
+          format: date
+          example: "2023-06-15"
+        inverter_count:
+          type: integer
+          example: 3
+        panel_count:
+          type: integer
+          example: 42
+        manufacturer:
+          type: string
+          example: "SolarTech Inc."
+        model:
+          type: string
+          example: "ST-350W"
+        warranty_expiry:
+          type: string
+          format: date
+        last_maintenance:
+          type: string
+          format: date-time
+
+    SystemStatus:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [green, red, offline, moon]
+          description: |
+            Current system status:
+            - green: Operating normally during daytime
+            - red: Issues detected or no production during expected hours
+            - offline: System not communicating
+            - moon: Nighttime status (green systems only)
+        current_power:
+          type: number
+          description: Current power output in kW
+          example: 5.2
+        last_update:
+          type: string
+          format: date-time
+        issues:
+          type: array
+          description: List of current issues
+          items:
+            type: string
+            example: "Inverter 2 offline"
+        inverter_statuses:
+          type: array
+          items:
+            $ref: '#/components/schemas/InverterStatus'
+
+    SystemSummary:
+      type: object
+      properties:
+        system_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, offline, moon]
+        current_power:
+          type: number
+        capacity:
+          type: number
+        location:
+          $ref: '#/components/schemas/Location'
+
+    # Inverter Schemas
+    InverterSummary:
+      type: object
+      properties:
+        inverter_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, offline]
+        current_power:
+          type: number
+        capacity:
+          type: number
+
+    InverterProfile:
+      type: object
+      properties:
+        inverter_id:
+          type: string
+          format: uuid
+        system_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        manufacturer:
+          type: string
+        model:
+          type: string
+        serial_number:
+          type: string
+        capacity:
+          type: number
+          description: Inverter capacity in kW
+        installation_date:
+          type: string
+          format: date
+        last_maintenance:
+          type: string
+          format: date-time
+        firmware_version:
+          type: string
+
+    InverterStatus:
+      type: object
+      properties:
+        inverter_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [green, red, offline]
+        current_power:
+          type: number
+        temperature:
+          type: number
+          description: Inverter temperature in Celsius
+        efficiency:
+          type: number
+          description: Current efficiency percentage
+        error_codes:
+          type: array
+          items:
+            type: string
+
+    InverterDailyData:
+      type: object
+      properties:
+        inverter_id:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        energy_production:
+          type: number
+        peak_power:
+          type: number
+        average_power:
+          type: number
+        efficiency:
+          type: number
+        operating_hours:
+          type: number
+        hourly_data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HourlyData'
+
+    # User Management Schemas
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, user, technician, viewer]
+        phone:
+          type: string
+        address:
+          type: string
+        notification_preferences:
+          $ref: '#/components/schemas/NotificationPreferences'
+        created_at:
+          type: string
+          format: date-time
+        last_login:
+          type: string
+          format: date-time
+
+    NotificationPreferences:
+      type: object
+      properties:
+        email_notifications:
+          type: boolean
+        push_notifications:
+          type: boolean
+        sms_notifications:
+          type: boolean
+        daily_reports:
+          type: boolean
+        incident_alerts:
+          type: boolean
+
+    # Device Management Schemas
+    DeviceRegistration:
+      type: object
+      required:
+        - user_id
+        - device_token
+        - platform
+      properties:
+        user_id:
+          type: string
+          description: User identifier
+        device_token:
+          type: string
+          description: Device push notification token
+        platform:
+          type: string
+          enum: [ios, android]
+          description: Device platform
+        device_info:
+          type: object
+          description: Additional device information
+          properties:
+            model:
+              type: string
+            os_version:
+              type: string
+            app_version:
+              type: string
+
+    DeviceResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        device_id:
+          type: string
+
+    # Incident Management Schemas
+    Incident:
+      type: object
+      properties:
+        incident_id:
+          type: string
+        system_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        assigned_technician:
+          type: string
+        resolution:
+          type: string
+
+    # Supporting Schemas
+    Location:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+          example: 40.7128
+        longitude:
+          type: number
+          format: double
+          example: -74.0060
+        address:
+          type: string
+          example: "123 Solar Street, New York, NY 10001"
+        city:
+          type: string
+          example: "New York"
+        state:
+          type: string
+          example: "NY"
+        country:
+          type: string
+          example: "USA"
+        timezone:
+          type: string
+          example: "America/New_York"
+
+    WeatherData:
+      type: object
+      properties:
+        temperature:
+          type: number
+          description: Temperature in Celsius
+        humidity:
+          type: number
+          description: Humidity percentage
+        cloud_cover:
+          type: number
+          description: Cloud cover percentage
+        wind_speed:
+          type: number
+          description: Wind speed in m/s
+        solar_irradiance:
+          type: number
+          description: Solar irradiance in W/m²
+        weather_condition:
+          type: string
+          example: "sunny"
+
+    HourlyData:
+      type: object
+      properties:
+        hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+        power:
+          type: number
+          description: Power output in kW
+        energy:
+          type: number
+          description: Energy produced in kWh
+        efficiency:
+          type: number
+          description: Efficiency percentage
+
+    DailyBreakdown:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        energy:
+          type: number
+        peak_power:
+          type: number
+        co2_savings:
+          type: number
+        earnings:
+          type: number
+
+    WeeklyBreakdown:
+      type: object
+      properties:
+        week_start:
+          type: string
+          format: date
+        week_end:
+          type: string
+          format: date
+        energy:
+          type: number
+        co2_savings:
+          type: number
+        earnings:
+          type: number
+
+    # Error Schema
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type
+          example: "ValidationError"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid system ID format"
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+        request_id:
+          type: string
+          description: Unique request identifier for debugging
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Chat
+    description: AI-powered chat assistant
+  - name: Solar Systems
+    description: Solar system data and monitoring
+  - name: Inverters
+    description: Inverter-specific data and status
+  - name: User Management
+    description: User profiles and system access
+  - name: Device Management
+    description: Mobile device registration for notifications
